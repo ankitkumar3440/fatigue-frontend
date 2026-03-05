@@ -3,6 +3,9 @@ FatigueDetect — Streamlit frontend
 Deploy on Streamlit Cloud (free)
 """
 
+import subprocess, sys
+subprocess.run([sys.executable, "-m", "pip", "install", "plotly==5.22.0", "-q"], check=False)
+
 import streamlit as st
 import requests, io
 import numpy as np
@@ -187,7 +190,6 @@ with st.sidebar:
     st.markdown("### 🎧 FatigueDetect")
     st.markdown("---")
 
-    # API health
     online = False
     try:
         h = requests.get(f"{API}/health", timeout=5)
@@ -250,7 +252,7 @@ if uploaded is None:
 file_bytes = uploaded.read()
 
 # ─────────────────────────────────────────────
-# Fetch signal stats (for metrics bar)
+# Fetch signal stats
 # ─────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def get_stats(fb):
@@ -265,7 +267,7 @@ def get_stats(fb):
 stats = get_stats(file_bytes)
 
 if stats:
-    c1,c2,c3,c4 = st.columns(4)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Duration",    f"{stats['duration_sec']}s")
     c2.metric("PPG Samples", f"{stats['ppg_samples']:,}")
     c3.metric("Acc Samples", f"{stats['acc_samples']:,}")
@@ -284,12 +286,9 @@ TAB_VIZ, TAB_PRED, TAB_ACT = st.tabs(
 with TAB_VIZ:
     st.markdown("#### Raw Sensor Signals")
 
-    # ── PPG chart ──
     if stats and "ppg_chart" in stats:
         t = np.array(stats["ppg_chart"]["t"])
         v = np.array(stats["ppg_chart"]["v"])
-
-        # Smoothed overlay via rolling mean
         v_s = pd.Series(v).rolling(15, center=True, min_periods=1).mean().values
 
         fig = go.Figure()
@@ -305,19 +304,19 @@ with TAB_VIZ:
                        font=dict(size=12, color="#94a3b8")))
         st.plotly_chart(fig, use_container_width=True)
     else:
-        # Local parse fallback
         try:
             df_v = pd.read_csv(io.BytesIO(file_bytes))
             df_v.columns = df_v.columns.str.strip()
             pid_col = next((c for c in df_v.columns if "peripheral" in c.lower()), None)
             if pid_col:
                 df_v[pid_col] = pd.to_numeric(df_v[pid_col], errors="coerce")
-                ppg_rows = df_v[df_v[pid_col].isin([2,5])]
-                v3 = next((c for c in df_v.columns if "value 3" in c.lower() or c.lower()=="value3"), None)
+                ppg_rows = df_v[df_v[pid_col].isin([2, 5])]
+                v3 = next((c for c in df_v.columns
+                           if "value 3" in c.lower() or c.lower() == "value3"), None)
                 if v3 and not ppg_rows.empty:
                     sig = pd.to_numeric(ppg_rows[v3], errors="coerce").dropna().values
-                    step = max(1, len(sig)//1500)
-                    t_p = np.arange(len(sig))[::step]/50
+                    step = max(1, len(sig) // 1500)
+                    t_p = np.arange(len(sig))[::step] / 50
                     fig2 = go.Figure(go.Scatter(x=t_p, y=sig[::step],
                         line=dict(color="#38bdf8", width=1.2)))
                     fig2.update_layout(**CHART_THEME, height=250,
@@ -329,7 +328,6 @@ with TAB_VIZ:
         except Exception as ex:
             st.warning(f"Could not render chart locally: {ex}")
 
-    # ── Sensor breakdown ──
     st.markdown("#### Sensor Row Counts")
     try:
         df_s = pd.read_csv(io.BytesIO(file_bytes))
@@ -338,11 +336,12 @@ with TAB_VIZ:
         if pc:
             df_s[pc] = pd.to_numeric(df_s[pc], errors="coerce")
             cnts = df_s.groupby(pc).size().reset_index(name="Rows")
-            pid_lbl = {0:"Accelerometer",1:"Gyroscope",2:"PPG",5:"PPG"}
+            pid_lbl = {0: "Accelerometer", 1: "Gyroscope", 2: "PPG", 5: "PPG"}
             cnts["Sensor"] = cnts[pc].map(pid_lbl).fillna("Unknown")
-            st.dataframe(cnts.rename(columns={pc:"PID"})[["Sensor","PID","Rows"]],
+            st.dataframe(cnts.rename(columns={pc: "PID"})[["Sensor", "PID", "Rows"]],
                          use_container_width=True, hide_index=True)
-    except: pass
+    except:
+        pass
 
 # ══════════════════════════
 # TAB 2 — FATIGUE ANALYSIS
@@ -385,7 +384,6 @@ with TAB_PRED:
     clr  = res["color"]
     cls  = "result-ok" if pred == 0 else "result-bad"
 
-    # Result card
     st.markdown(f"""
     <div class="result-card {cls}">
       <div class="result-status" style="color:{clr}">{res['emoji']} {res['status']}</div>
@@ -393,8 +391,7 @@ with TAB_PRED:
     </div>
     """, unsafe_allow_html=True)
 
-    # Metrics
-    c1,c2,c3,c4 = st.columns(4)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Fatigue Probability", f"{prob*100:.1f}%")
     c2.metric("Confidence",          f"{conf:.1f}%")
     c3.metric("Recording Duration",  f"{res['duration_sec']}s")
@@ -403,35 +400,34 @@ with TAB_PRED:
     st.markdown("")
     left, right = st.columns([1, 1])
 
-    # Gauge
     with left:
         fig_g = go.Figure(go.Indicator(
             mode="gauge+number",
-            value=round(prob*100, 1),
+            value=round(prob * 100, 1),
             title=dict(text="P(Fatigue) %",
                        font=dict(color="#64748b", size=13)),
             number=dict(font=dict(color=clr, size=42,
                                   family="IBM Plex Mono, monospace")),
             gauge=dict(
-                axis=dict(range=[0,100], tickfont=dict(color="#475569"), tickcolor="#1e2d4a"),
+                axis=dict(range=[0, 100], tickfont=dict(color="#475569"),
+                          tickcolor="#1e2d4a"),
                 bar=dict(color=clr, thickness=0.22),
                 bgcolor="#0a0f1e", bordercolor="#1e2d4a",
-                steps=[dict(range=[0,45],  color="rgba(34,197,94,.10)"),
-                       dict(range=[45,60], color="rgba(250,204,21,.07)"),
-                       dict(range=[60,100],color="rgba(239,68,68,.10)")],
-                threshold=dict(line=dict(color="#f1f5f9",width=2),
+                steps=[dict(range=[0,  45], color="rgba(34,197,94,.10)"),
+                       dict(range=[45, 60], color="rgba(250,204,21,.07)"),
+                       dict(range=[60,100], color="rgba(239,68,68,.10)")],
+                threshold=dict(line=dict(color="#f1f5f9", width=2),
                                thickness=0.65, value=45)
             )
         ))
         fig_g.update_layout(**CHART_THEME, height=260)
         st.plotly_chart(fig_g, use_container_width=True)
 
-    # Window timeline
     with right:
-        wins = res.get("windows",[])
+        wins = res.get("windows", [])
         if wins:
-            t_w = [w["t"]    for w in wins]
-            p_w = [w["prob"] for w in wins]
+            t_w   = [w["t"]    for w in wins]
+            p_w   = [w["prob"] for w in wins]
             bar_clr = ["#ef4444" if p >= 0.45 else "#22c55e" for p in p_w]
 
             fig_t = go.Figure()
@@ -442,10 +438,11 @@ with TAB_PRED:
                 hovertemplate="t=%{x:.1f}s<br>prob=%{y:.3f}<extra></extra>"))
             fig_t.update_layout(**CHART_THEME, height=260,
                 xaxis=dict(title="Time (s)", gridcolor="#111827"),
-                yaxis=dict(title="P(Fatigue)", range=[0,1.05], gridcolor="#111827"),
+                yaxis=dict(title="P(Fatigue)", range=[0, 1.05],
+                           gridcolor="#111827"),
                 showlegend=False,
                 title=dict(text="Per-window Fatigue Probability",
-                           font=dict(size=12,color="#94a3b8")))
+                           font=dict(size=12, color="#94a3b8")))
             st.plotly_chart(fig_t, use_container_width=True)
 
 # ══════════════════════════
@@ -476,7 +473,7 @@ with TAB_ACT:
 
     with col_rec:
         st.markdown("##### ✅ Recommended")
-        for a in res.get("recommended",[]):
+        for a in res.get("recommended", []):
             st.markdown(f"""
             <div class="act">
               <span class="act-name">{a['name']}</span>
@@ -486,18 +483,19 @@ with TAB_ACT:
 
     with col_avo:
         st.markdown("##### ⚠️ Avoid")
-        for item in res.get("avoid",[]):
+        for item in res.get("avoid", []):
             st.markdown(f'<div class="avoid-item">— {item}</div>',
                         unsafe_allow_html=True)
 
-    # Suitability bar chart
     st.markdown("")
     st.markdown("##### Activity Suitability")
 
-    acts   = ["Intense Training","Moderate Exercise","Light Walk","Desk Work","Rest / Sleep"]
-    scores = ([0.93, 0.82, 0.60, 0.50, 0.20] if pred==0
+    acts   = ["Intense Training", "Moderate Exercise", "Light Walk",
+              "Desk Work", "Rest / Sleep"]
+    scores = ([0.93, 0.82, 0.60, 0.50, 0.20] if pred == 0
                else [0.05, 0.18, 0.75, 0.55, 0.95])
-    bar_c  = ["#22c55e" if s>=.7 else "#f59e0b" if s>=.4 else "#ef4444" for s in scores]
+    bar_c  = ["#22c55e" if s >= .7 else "#f59e0b" if s >= .4 else "#ef4444"
+              for s in scores]
 
     fig_s = go.Figure(go.Bar(
         x=scores, y=acts, orientation="h",
@@ -509,9 +507,9 @@ with TAB_ACT:
         hovertemplate="%{y}: %{x:.0%}<extra></extra>"
     ))
     fig_s.update_layout(**CHART_THEME, height=260,
-        xaxis=dict(range=[0,1.2], title="Suitability Score", gridcolor="#111827",
-                   tickformat=".0%"),
+        xaxis=dict(range=[0, 1.2], title="Suitability Score",
+                   gridcolor="#111827", tickformat=".0%"),
         yaxis=dict(gridcolor="#111827", tickfont=dict(color="#94a3b8")),
         title=dict(text="Activity Suitability Based on Fatigue State",
-                   font=dict(size=12,color="#94a3b8")))
+                   font=dict(size=12, color="#94a3b8")))
     st.plotly_chart(fig_s, use_container_width=True)
